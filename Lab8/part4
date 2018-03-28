@@ -1,0 +1,58 @@
+/*
+ * jmayn001_lab8_part4.c
+ *
+ * Created: 2/15/2017 11:30:05 PM
+ * Author : Jack
+ */ 
+
+#include <avr/io.h>
+void ADC_init() {
+	ADCSRA |= (1 << ADEN) | (1 << ADSC) | (1 << ADATE);
+}
+
+int main(void)
+{
+	ADC_init();
+	DDRA = 0x00; PORTA = 0xFF;
+	DDRB = 0xFF; PORTB = 0x00;
+	unsigned short A_input;
+	unsigned char B_output;
+    while (1) 
+    {
+		A_input = ADC;
+		if(A_input <= 80)
+		{
+			B_output = 0x01;
+		}
+		else if(A_input <= 160)
+		{
+			B_output = 0x02;
+		}
+		else if (A_input <= 240)
+		{
+			B_output = 0x04;
+		}
+		else if (A_input <= 320)
+		{
+			B_output = 0x08;
+		}
+		else if (A_input <= 400)
+		{
+			B_output = 0x10;
+		}
+		else if (A_input <= 480)
+		{
+			B_output = 0x20;
+		}
+		else if (A_input <= 560)
+		{
+			B_output = 0x40;
+		}
+		else if (A_input <= 640)
+		{
+			B_output = 0x80;
+		}
+		PORTB = B_output;
+    }
+}
+
