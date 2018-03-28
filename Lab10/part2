@@ -1,0 +1,122 @@
+#include <avr/io.h>
+#include <scheduler.h>
+#include <timer.h>
+#include <io.c>
+
+enum LCD_States { LCD_START, LCD_INIT, LCD_WAIT };
+enum Cursor_States { CUR_START, CUR_INIT, CUR_WAIT };  
+const unsigned char words[] = { ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ',
+	' ', ' ', ' ', ' ', ' ', 'C', 'S', '1', '2', '0',
+	'B', ' ', 'i', 's', ' ', 'L', 'e', 'g', 'e', 'n',
+	'd', '.', '.', '.', ' ', 'w', 'a', 'i', 't', ' ',
+	'f', 'o', 'r', ' ', 'i', 't', ' ', 'D', 'A', 'R',
+'Y', '!'};
+
+const unsigned short MSG_LENGTH = sizeof(words)/sizeof(char);    
+unsigned char position;      
+
+
+int TickFct_LCD(int state) {
+	switch(state) {
+		case LCD_START:
+		state = LCD_INIT;          
+		break;
+		case LCD_INIT:
+		position = 0;                
+		state = LCD_WAIT;         
+		break;
+		case LCD_WAIT:
+		break;
+		default:
+		state = LCD_START; break;  
+	}
+
+	switch(state) {
+		case LCD_WAIT:
+		if (position >= MSG_LENGTH) position = 0;
+		else ++position;
+		break;
+		default: break;
+	}
+
+	return state;
+}
+
+int TickFct_Cursor(int state) {
+	static unsigned char i, j;
+	switch(state) {
+		case CUR_START:
+		state = CUR_INIT;        
+		break;
+		case LCD_INIT:
+		i = 1;                      
+		j = position;               
+		LCD_Cursor(1);          
+		state = CUR_WAIT;   
+		break;
+		case CUR_WAIT:
+		break;
+		default:
+		state = CUR_START; break;
+	}
+	switch(state) {
+		case CUR_WAIT:
+		if(j >= MSG_LENGTH) LCD_WriteData(' ');
+		else LCD_WriteData(words[j]);
+		if (i >= 16) {
+			state = LCD_INIT;
+		}
+		else {i++; j++;}
+		break;
+		default: break;
+	}
+
+	return state;
+}
+
+int main(void)
+{
+	DDRA = 0xFF; PORTA = 0x00;
+	DDRD = 0xFF; PORTD = 0x00;
+
+	unsigned long int LCD_Task_calc = 300;
+	unsigned long int Cursor_Task_calc = 5;
+
+	unsigned long int tmpGCD = 1;
+	tmpGCD = findGCD(LCD_Task_calc, Cursor_Task_calc);
+
+	unsigned long int GCD = tmpGCD;
+	unsigned long int LCD_period = LCD_Task_calc/GCD;
+	unsigned long int Cursor_period = Cursor_Task_calc/GCD;
+
+	static task LCD_Task, Cursor_Task;
+	task *tasks[] = { &LCD_Task, &Cursor_Task };
+	const unsigned short numTasks = sizeof(tasks)/sizeof(task*);
+
+	LCD_Task.state = LCD_START;  
+	LCD_Task.period = LCD_period;  
+	LCD_Task.elapsedTime = LCD_period; 
+	LCD_Task.TickFct = &TickFct_LCD;  
+
+	Cursor_Task.state = CUR_START;   
+	Cursor_Task.period = Cursor_period;
+	Cursor_Task.elapsedTime = Cursor_period;
+	Cursor_Task.TickFct = &TickFct_Cursor;
+	LCD_init();
+	LCD_ClearScreen(); 
+	TimerSet(GCD); 
+	TimerOn(); 
+	unsigned short i;  
+	while(1)
+	{
+		for(i = 0; i < numTasks; i++) {
+			if(tasks[i]->elapsedTime == tasks[i]->period) {
+				tasks[i]->state = tasks[i]->TickFct(tasks[i]->state);
+				tasks[i]->elapsedTime = 0;
+			}
+			tasks[i]->elapsedTime += 1;
+		}
+		while(!TimerFlag);
+		TimerFlag = 0; 
+	}
+}
