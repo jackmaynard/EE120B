@@ -1,0 +1,114 @@
+
+#include <avr/io.h>
+#include <scheduler.h>
+#include <timer.h>
+#include <io.c>
+#include <keypad.h>
+
+enum KP_States { KP_START, KP_INIT, KP_WAIT };
+enum Cursor_States { LCD_START, LCD_INIT, LCD_WAIT };
+unsigned char curr_key;
+
+
+int TickFct_KP(int state) {
+	switch(state) {
+		case KP_START:
+		state = KP_INIT;
+		break;
+		case KP_INIT:
+		state = KP_WAIT;
+		break;
+		case KP_WAIT:
+		break;
+		default:
+		state = KP_START;
+		break;
+	}
+	switch(state) {
+		case KP_WAIT:
+		curr_key = GetKeypadKey();
+		break;
+		default: break;
+	}
+	return state;
+}
+
+int TickFct_Cursor(int state) {
+	switch(state) {
+		case LCD_START:
+		state = LCD_INIT;          
+		break;
+		case KP_INIT:
+		state = LCD_WAIT;       
+		break;
+		case LCD_WAIT:
+		break;
+		default:
+		state = LCD_START; break; 
+	}
+
+	switch(state) {
+		case LCD_WAIT:
+		if(curr_key != '\0') {
+			LCD_Cursor(1);             
+			LCD_WriteData(curr_key); 
+		}
+		break;
+		default: break;
+	}
+	return state;
+}
+
+int main(void)
+{
+	DDRA = 0xFF; PORTA = 0x00;
+	DDRB = 0xFF; PORTB = 0x00;
+	DDRC = 0xF0; PORTC = 0x0F;
+	DDRD = 0xFF; PORTD = 0x00;
+
+	unsigned long int KP_Task_calc = 10;
+	unsigned long int Cursor_Task_calc = 100;
+
+	unsigned long int tmpGCD = 1;
+	tmpGCD = findGCD(KP_Task_calc, Cursor_Task_calc);
+
+	unsigned long int GCD = tmpGCD;
+
+	unsigned long int KP_period = KP_Task_calc/GCD;
+	unsigned long int Cursor_period = Cursor_Task_calc/GCD;
+
+	static task KP_Task, Cursor_Task;
+	task *tasks[] = { &KP_Task, &Cursor_Task };
+	const unsigned short numTasks = sizeof(tasks)/sizeof(task*);
+
+	KP_Task.state = KP_START;    
+	KP_Task.period = KP_period;  
+	KP_Task.elapsedTime = KP_period; 
+	KP_Task.TickFct = &TickFct_KP; 
+
+	Cursor_Task.state = LCD_START;     
+	Cursor_Task.period = Cursor_period; 
+	Cursor_Task.elapsedTime = Cursor_period; 
+	Cursor_Task.TickFct = &TickFct_Cursor; 
+
+	LCD_init();                
+	LCD_ClearScreen();         
+
+	TimerSet(GCD);             
+	TimerOn();                  
+
+	unsigned short i;          
+
+	while(1)
+	{
+		for(i = 0; i < numTasks; i++) {
+			if(tasks[i]->elapsedTime == tasks[i]->period) {
+				tasks[i]->state = tasks[i]->TickFct(tasks[i]->state);
+				tasks[i]->elapsedTime = 0;
+			}
+			tasks[i]->elapsedTime += 1;
+		}
+		while(!TimerFlag);
+		TimerFlag = 0;      
+	}
+}
