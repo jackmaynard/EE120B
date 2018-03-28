@@ -1,0 +1,301 @@
+#include <avr/io.h>
+#include <stdio.h>
+#include <avr/interrupt.h>
+#include <io.h>
+#include <io.c>
+#include <keypad.h>
+#include <usart_ATMega1284.h>
+#include <timer.h>
+
+unsigned long int findGCD(unsigned long int a, unsigned long int b)
+{
+	unsigned long int c;
+	while(1) {
+		c = a%b;
+		if (c == 0) {return b;}
+		a = b;
+		b = c;
+	}
+	return 0;
+}
+
+void ADC_init() {
+	ADCSRA |= (1 << ADEN) | (1 << ADSC) | (1 << ADATE);
+}
+
+typedef struct _task {
+	signed char state;
+	unsigned long int period;
+	unsigned long int elapsedTime;
+	int (*TickFct) (int);
+	} task;
+	
+
+
+unsigned char key;
+unsigned char i;
+unsigned char cursor;
+unsigned char array_max;
+unsigned char array_position;
+unsigned char message[32] = "";
+unsigned char MESSAGE_SEND = 0;
+unsigned char timer_number = 100;
+
+unsigned char GetChar(unsigned char input, unsigned char i)
+{
+	unsigned char TWO[3] = {'A', 'B', 'C'};
+	unsigned char THREE[3] = {'D', 'E', 'F'};
+	unsigned char FOUR[3] = {'G', 'H', 'I'};
+	unsigned char FIVE[3] = {'J', 'K', 'L'};
+	unsigned char SIX[3] = {'M', 'N', 'O'};
+	unsigned char SEVEN[4] = {'P', 'Q', 'R', 'S'};
+	unsigned char EIGHT[3] = {'T', 'U', 'V'};
+	unsigned char NINE[4] = {'W', 'X', 'Y', 'Z'};
+	unsigned char ZERO[1] = {' '};
+	
+	if (input == '2')
+	return TWO[i];
+	else if (input == '3')
+	return THREE[i];
+	else if (input == '4')
+	return FOUR[i];
+	else if (input == '5')
+	return FIVE[i];
+	else if (input == '6')
+	return SIX[i];
+	else if (input == '7')
+	return SEVEN[i];
+	else if (input == '8')
+	return EIGHT[i];
+	else if (input == '9')
+	return NINE[i];
+	else if (input == '0')
+	return ZERO[i];
+}
+enum TXT_states {TXT_init, TXT_wait1, TXT_2_9, TXT_release, TXT_wait2} TXT_state;
+int TXT_tick(int state)
+{
+	switch(TXT_state) {
+		case TXT_init:
+			TXT_state = TXT_wait1;
+			cursor = 1;
+			array_position = 0; break;
+		case TXT_wait1:
+			if (MESSAGE_SEND) {
+				TXT_state = TXT_init;
+			}
+			else if (cursor >= 32) {
+				TXT_state = TXT_wait1;
+			}
+			else if (GetKeypadKey() == '\0')
+				TXT_state = TXT_wait1;
+			else{
+				TXT_state = TXT_2_9;
+				LCD_WriteData(GetChar(GetKeypadKey(), array_position));
+				LCD_Cursor(cursor);
+			} break;
+		case TXT_2_9:
+			TXT_state = TXT_release;
+			if (GetKeypadKey() == '9' || GetKeypadKey() == '7')
+				array_max = 3;
+			else if (GetKeypadKey() == '0')
+				array_max = 0;
+			else
+				array_max = 2; break;
+		case TXT_release:
+			if (GetKeypadKey() == key)
+				TXT_state = TXT_release;
+			else if (GetKeypadKey() == '\0')
+				TXT_state = TXT_wait2;break;
+		case TXT_wait2:
+			if (i >= timer_number) {
+				TXT_state = TXT_wait1;
+				message[cursor - 1] = GetChar(key, array_position);
+				++cursor;
+				LCD_Cursor(cursor);
+				array_position = 0;
+			}
+			else if (i < timer_number && GetKeypadKey() == '\0' && cursor < 31) {
+					TXT_state = TXT_wait2;
+					++i;
+			}
+			else if (i < timer_number && GetKeypadKey() != key && cursor < 31) {
+					TXT_state = TXT_2_9;
+					message[cursor - 1] = GetChar(key, array_position);
+					key = GetKeypadKey();
+					i = 0;
+					++cursor;
+					LCD_Cursor(cursor);
+					array_position = 0;
+					LCD_WriteData(GetChar(GetKeypadKey(), array_position));;
+					LCD_Cursor(cursor);
+			}
+			else if (i < timer_number && GetKeypadKey() == key) {
+				TXT_state = TXT_release;
+				i = 0;
+				if (array_position < array_max)
+					++array_position;
+				else if (array_position >= array_max)
+					array_position = 0;
+				LCD_WriteData(GetChar(GetKeypadKey(), array_position));
+				LCD_Cursor(cursor);
+			} 
+			else if (i < timer_number && cursor == 31) {
+				++i;
+				}break;
+		default:
+			state = TXT_init; break;
+	}
+	
+	switch(TXT_state) {
+		case TXT_init:
+			memset(message, 0, strlen(message));
+			LCD_ClearScreen();
+			cursor = 1; LCD_Cursor(cursor);
+			break;
+		case TXT_wait1:
+			break;
+		case TXT_2_9:
+			key = GetKeypadKey();
+			i = 0; break;
+		case TXT_release:
+			break;
+		case TXT_wait2:
+			break;
+		default: break;
+	}
+	return state;
+}
+
+enum SND_states {SND_init, SND_wait, SND_send, SND_wait2, SND_send_temp, SND_wait2_temp} SND_state;
+int SND_tick(int state)
+{
+	uint32_t temperature_whole;
+	uint32_t temperature_fractional;
+	unsigned char temperature_whole_string[100];
+	unsigned char temperature_fractional_string[100];
+	unsigned char button_TXT = ~PIND;
+	unsigned char button_TMP = ~PIND;
+	switch(SND_state) {
+		case SND_init:
+			SND_state = SND_wait;
+			MESSAGE_SEND = 0; break;
+		case SND_wait:
+			if (!(button_TXT & 0x40) && (!(button_TMP & 0x08)))
+				SND_state = SND_wait;
+			else if(button_TXT & 0x40)
+				SND_state = SND_send; 
+			else if (button_TMP & 0x08)
+				SND_state = SND_send_temp; break;
+		case SND_send:
+			SND_state = SND_wait2; break;
+		case SND_wait2:
+			MESSAGE_SEND = 0;
+			if (button_TXT & 0x40)
+				SND_state = SND_wait2;
+			else if (!(button_TXT & 0x40))
+				SND_state = SND_init; break;
+		case SND_send_temp:
+			SND_state = SND_wait2_temp; break;
+		case SND_wait2_temp:
+			if (button_TMP & 0x08)
+				SND_state = SND_wait2_temp;
+			else if (!(button_TMP & 0x08))
+				SND_state = SND_init; break;
+		default:
+			state = SND_init; break;
+	}
+	
+	switch(SND_state) {
+		case SND_init:
+			break;
+		case SND_wait:
+			break;
+		case SND_send:
+			MESSAGE_SEND = 1;
+			for(unsigned char bluetooth_count = 0; bluetooth_count < 32; ++bluetooth_count) {
+				USART_Send(message[bluetooth_count], 0);
+			}
+			USART_Send(0x0A, 0);
+			USART_Send(0x0D, 0);
+		break;
+		case SND_wait2:
+			break;
+		case SND_send_temp:
+			temperature_whole = ((uint32_t)ADC * 50000 - ((uint32_t)13750 *(uint32_t)1024)) / ((uint32_t)230400);
+			temperature_fractional = ((10 * ((uint32_t)ADC * 50000 - ((uint32_t)13750 * (uint32_t)1024))) / (uint32_t)230400 - (10 * temperature_whole));
+			sprintf(temperature_whole_string, "%lu", temperature_whole);
+			sprintf(temperature_fractional_string, "%lu", temperature_fractional);
+			for (unsigned char temperature_count = 0; temperature_whole_string[temperature_count] != NULL; ++temperature_count) {
+				USART_Send(temperature_whole_string[temperature_count], 0);
+			}
+			USART_Send('.', 0);
+			for (unsigned char temperature_count = 0; temperature_count < 1; ++temperature_count) {
+				USART_Send(temperature_fractional_string[temperature_count], 0);
+			}
+			USART_Send(0x0A, 0);
+			USART_Send(0x0D, 0);
+			break;
+		default:
+			break;
+	}
+	return state;
+}
+
+
+
+int main(void)
+{
+	DDRA = 0x80; PORTA = 0x08;
+	DDRB = 0xFF; PORTB = 0x00;
+	DDRC = 0xF0; PORTC = 0x0F;
+	DDRD = 0xB7; PORTD = 0x48;
+	
+	unsigned long int TXT_Tick_calc = 10;
+	unsigned long int SND_Tick_calc = 10;
+	
+	unsigned long int tmpGCD = 1;
+	tmpGCD = findGCD(TXT_Tick_calc, SND_Tick_calc);
+	
+	unsigned long int GCD = tmpGCD;
+	
+	unsigned long int TXT_period = TXT_Tick_calc / GCD;
+	unsigned long int SND_period = SND_Tick_calc / GCD;
+	
+	static task task1, task2;
+	task *tasks[] = { &task1, &task2 };
+	const unsigned short numTasks = sizeof(tasks) / sizeof(task*);
+	
+	task1.state = TXT_init;
+	task1.period = TXT_period;
+	task1.elapsedTime = TXT_period;
+	task1.TickFct = &TXT_tick;
+	
+	task2.state = SND_init;
+	task2.period = SND_period;
+	task2.elapsedTime = SND_period;
+	task2.TickFct = &SND_tick;
+	
+	TimerSet(GCD);
+	TimerOn();
+	
+	initUSART(0);
+	LCD_init();
+	LCD_ClearScreen();
+	ADC_init();
+	
+	unsigned short i;
+	while(1)
+	{
+		for (i = 0; i < numTasks; i++ ) {
+			if ( tasks[i]->elapsedTime == tasks[i]->period ) {
+				tasks[i]->state = tasks[i]->TickFct(tasks[i]->state);
+				tasks[i]->elapsedTime = 0;
+			}
+			tasks[i]->elapsedTime += 1;
+		}
+		while(!TimerFlag);
+		TimerFlag = 0;
+	}
+	return 0;
+}
