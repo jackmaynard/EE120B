@@ -1,0 +1,197 @@
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <bit.h>
+#include <timer.h>
+#include <stdio.h>
+
+//--------Find GCD function --------------------------------------------------
+unsigned long int findGCD(unsigned long int a, unsigned long int b)
+{
+    unsigned long int c;
+    while(1){
+        c = a%b;
+        if(c==0){return b;}
+        a = b;
+b = c;
+    }
+    return 0;
+}
+//--------End find GCD function ----------------------------------------------
+unsigned char GetKeypadKey() {
+	//PORTC = 0xEF; // Enable col 4 with 0, disable others with 1�s
+	PORTC = 0x7F;
+	asm("nop"); // add a delay to allow PORTC to stabilize before checking
+	if (GetBit(PINC,0)==0) { return('*'); }
+	if (GetBit(PINC,1)==0) { return('7'); }
+	if (GetBit(PINC,2)==0) { return('4'); }
+	if (GetBit(PINC,3)==0) { return('1'); }
+
+	// Check keys in col 2
+	//PORTC = 0xDF; // Enable col 5 with 0, disable others with 1�s
+	PORTC = 0xBF;
+	asm("nop"); // add a delay to allow PORTC to stabilize before checking
+	if (GetBit(PINC,0)==0) { return('0'); }
+	if (GetBit(PINC,1)==0) { return('8'); }
+	if (GetBit(PINC,2)==0) { return('5'); }
+	if (GetBit(PINC,3)==0) { return('2'); }
+
+	// Check keys in col 3
+	//PORTC = 0xBF; // Enable col 6 with 0, disable others with 1�s
+	PORTC = 0xDF;
+	asm("nop"); // add a delay to allow PORTC to stabilize before checking
+	if (GetBit(PINC,0)==0) { return('#'); }
+	if (GetBit(PINC,1)==0) { return('9'); }
+	if (GetBit(PINC,2)==0) { return('6'); }
+	if (GetBit(PINC,3)==0) { return('3'); }
+
+	// Check keys in col 4
+	//PORTC = 0x7F;
+	PORTC = 0xEF;
+	asm("nop");
+	if (GetBit(PINC,0)==0) { return('D'); }
+	if (GetBit(PINC,1)==0) { return('C'); }
+	if (GetBit(PINC,2)==0) { return('B'); }
+	if (GetBit(PINC,3)==0) { return('A'); }
+	
+
+	return('\0'); // default value
+
+}
+unsigned char key;
+unsigned char LED_output = 0;
+//--------Task scheduler data structure---------------------------------------
+typedef struct _task {
+    signed char state; //Task's current state
+    unsigned long int period; //Task period
+    unsigned long int elapsedTime; //Time elapsed since last task tick
+    int (*TickFct)(int); //Task tick function
+} task;
+//--------End Task scheduler data structure-----------------------------------
+
+//--------User defined FSMs---------------------------------------------------
+enum Key_states {init, wait} Key_state;
+int Key_tick(int state) {
+    switch(state) {
+		case init:
+			state = wait; break;
+		case wait:
+			state = wait; break;
+	}
+	switch(state) {
+		case wait:
+			key = GetKeypadKey(); break;
+	}
+	return state;
+}
+
+enum LED_states {start, light} LED_state;
+int LED_tick(int state) {
+	switch(state) {
+		case start:
+			state = light; break;
+		case light:
+			state = light; break;
+	}
+	switch(state) {
+		case light:
+			if (key == '0')
+				LED_output = 0x00;
+			if (key == '1')
+				LED_output = 0x01;
+			if (key == '2')
+				LED_output = 0x02;
+			if (key == '3')
+				LED_output = 0x03;
+			if (key == '4')
+				LED_output = 0x04;
+			if (key == '5')
+				LED_output = 0x05;
+			if (key == '6')
+				LED_output = 0x06;
+			if (key == '7')
+				LED_output = 0x07;
+			if (key == '8')
+				LED_output = 0x08;
+			if (key == '9')
+				LED_output = 0x09;
+			if (key == 'A')
+				LED_output = 0x0A;
+			if (key == 'B')
+				LED_output = 0x0B;
+			if (key == 'C')
+				LED_output = 0x0C;
+			if (key == 'D')
+				LED_output = 0x0D;
+			if (key == '#')
+				LED_output = 0x0E;
+			if (key == '*')
+				LED_output = 0x0F;
+			if (key == '\0')
+				LED_output = 0x1F;
+			PORTB = LED_output;
+			break;
+	}
+	return state;
+}
+// --------END User defined FSMs-----------------------------------------------
+
+// Implement scheduler code from PES.
+int main()
+{
+
+DDRC = 0xF0; PORTC = 0x0F;
+DDRB = 0xFF; PORTB = 0x00;
+// Period for the tasks
+unsigned long int SMTick1_calc = 50;
+unsigned long int SMTick2_calc = 50;
+
+//Calculating GCD
+unsigned long tmpGCD = SMTick1_calc;
+
+//Greatest common divisor for all tasks or smallest time unit for tasks.
+unsigned long int GCD = tmpGCD;
+
+//Recalculate GCD periods for scheduler
+unsigned long int SMTick1_period = SMTick1_calc/GCD;
+unsigned long int SMTick2_period = SMTick2_calc/GCD;
+
+//Declare an array of tasks 
+static task task1, task2;
+task *tasks[] = { &task1, &task2};
+const unsigned short numTasks = sizeof(tasks)/sizeof(task*);
+
+// Task 1
+task1.state = init;//Task initial state.
+task1.period = SMTick1_period;//Task Period.
+task1.elapsedTime = SMTick1_period;//Task current elapsed time.
+task1.TickFct = &Key_tick;//Function pointer for the tick.
+
+task2.state = start;
+task2.period = SMTick2_period;
+task2.elapsedTime = SMTick2_period;
+task2.TickFct = &LED_tick;
+
+// Set the timer and turn it on
+TimerSet(GCD);
+TimerOn();
+
+unsigned short i; // Scheduler for-loop iterator
+while(1) {
+    // Scheduler code
+    for ( i = 0; i < numTasks; i++ ) {
+        // Task is ready to tick
+        if ( tasks[i]->elapsedTime == tasks[i]->period ) {
+            // Setting next state for task
+            tasks[i]->state = tasks[i]->TickFct(tasks[i]->state);
+            // Reset the elapsed time for next tick.
+            tasks[i]->elapsedTime = 0;
+        }
+        tasks[i]->elapsedTime += 1;
+    }
+    while(!TimerFlag);
+    TimerFlag = 0;
+}
+
+// Error: Program should not exit!
+return 0;
+}
